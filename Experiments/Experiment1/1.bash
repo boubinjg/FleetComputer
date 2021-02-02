@@ -1,1 +1,1 @@
-bash buildGoal.bash Cubes/AUG20.csv Cubes/AUG20_MGs.csv 1000 9 .8
+bash buildGoal.bash Cubes/AUG20.csv Cubes/AUG20_MGs.csv 100 9 .8

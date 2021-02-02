@@ -19,7 +19,6 @@ import cv2
 from matplotlib import pyplot as plt
 import matplotlib.colors as mcolors
 
-
 from hyperopt import hp, fmin, tpe, STATUS_OK, Trials
 
 
@@ -37,7 +36,6 @@ knndataSet = []
 managementGroups = []
 mgs = []
 initialPosition=0
-GTMap = None
 
 
 dirDict = {0: [[1,3],[3,1]],
@@ -395,57 +393,6 @@ def extrapolate(GTmap, visited, imagedata):
         #print(['visited='+str(len(visible_zones)),'empty='+str(len(empty_zones)),'search='+str(len(search_zones))])
     return GTmap
 
-def checkAccBin(map, imagedata, mgs):
-    global X_DIM
-    right = 0
-    avgex = getAverageGExMGS(mgs)
-    shape = map.shape
-
-    for g in range(len(mgs)):
-        group = mgs[g]
-        imgs = group[2][1:-1].split(',')
-        zone = 0
-
-
-        row = int(group[1])
-        col = int(group[0])
-        groupnum = row*X_DIM+col
-        #print(row,col,groupnum)
-
-        for imgNum in range(len(imgs)):
-            imgIdx = imgs[imgNum].strip()[1:-1]
-            imageVal = getImage(imgIdx)
-            gi = getGI(imageVal)
-
-            pred = 0
-
-            if(gi>1*avgex):
-                pred = 0
-            elif(gi>.9*avgex):
-                pred = 1
-            elif(gi>.8*avgex):
-                pred = 2
-            else:
-                pred = 3
-
-            idxr = row*3+zone//3
-            idxc = col*3+zone%3
-
-            #print(row, col, zone, idxr, idxc, imgIdx, gi, avgex)
-            #print(group)
-            if(map[idxc][idxr] > .5 and pred > 0):
-                right += 1
-            elif(map[idxc][idxr] < .5 and pred == 0):
-                right += 1
-
-            zone += 1
-
-    #showGTmap(map)
-
-    #print('Accuracy: '+str(right/(shape[0]*shape[1])))
-    return right/(shape[0]*shape[1])
-
-
 def checkAcc(map, imagedata, mgs):
     global X_DIM
     right = 0
@@ -495,6 +442,7 @@ def checkAcc(map, imagedata, mgs):
 
             zone += 1
 
+    showGTmap(map)
     print('Accuracy: '+str(right/(shape[0]*shape[1])))
     return right/(shape[0]*shape[1])
 
@@ -568,7 +516,7 @@ def explore(mg, imagedata, pos, mgs):
     util = 0
     imgList = getGroup(mg)
     simIdx = 0
-    while(len(visited) < ZONES_TO_VISIT and simIdx < MAX_UTIL): #Arbitrary condition for testing, change to hyperparam approach
+    while(len(visited) < 9): #Arbitrary condition for testing, change to hyperparam approach
         currentIm = getImage(imgList[pos])
         gi = getGI(currentIm)
         util += getUtil(currentIm)
@@ -644,30 +592,6 @@ def buildGTMap(mgs, imagedata, visitedZones):
                 GTmap[idxc][idxr] = 3
     return GTmap
 
-def make_colormap(seq):
-    """Return a LinearSegmentedColormap
-    seq: a sequence of floats and RGB-tuples. The floats should be increasing
-    and in the interval (0,1).
-    """
-    seq = [(None,) * 3, 0.0] + list(seq) + [1.0, (None,) * 3]
-    cdict = {'red': [], 'green': [], 'blue': []}
-    for i, item in enumerate(seq):
-        if isinstance(item, float):
-            r1, g1, b1 = seq[i - 1]
-            r2, g2, b2 = seq[i + 1]
-            cdict['red'].append([item, r1, r2])
-            cdict['green'].append([item, g1, g2])
-            cdict['blue'].append([item, b1, b2])
-    return mcolors.LinearSegmentedColormap('CustomMap', cdict)
-
-def showGTmap(map):
-    c = mcolors.ColorConverter().to_rgb
-    heatMap = make_colormap([c('limegreen'), 0.25, c('yellow'), 0.5, c('orange'), 0.75, c('red')])
-    fig = plt.figure()
-    f = plt.imshow(map, cmap=heatMap)
-    fig.savefig('DistanceFunc.png', dpi=fig.dpi)
-
-
 def getNumVisited(zones):
     visited = 0
     for group in zones:
@@ -675,11 +599,11 @@ def getNumVisited(zones):
     return visited
 
 def runSim(params):
-    global mgs, imagedata, initialPosition, GTMap
+    global mgs, imagedata, initialPosition
     visitedZones = simulateMission(mgs, imagedata, initialPosition)
     GTMap = buildGTMap(mgs, imagedata, visitedZones)
     fullMap = extrapolate(GTMap, visitedZones, imagedata)
-    acc = checkAccBin(fullMap, imagedata, mgs)
+    acc = checkAcc(fullMap, imagedata, mgs)
 
     numVisited = getNumVisited(visitedZones)
 
@@ -725,6 +649,30 @@ def rebuildUtility(params):
         entry += ' Utility='+str(utility)+']'
         imagedata[i][12] = entry
 
+def make_colormap(seq):
+    """Return a LinearSegmentedColormap
+    seq: a sequence of floats and RGB-tuples. The floats should be increasing
+    and in the interval (0,1).
+    """
+    seq = [(None,) * 3, 0.0] + list(seq) + [1.0, (None,) * 3]
+    cdict = {'red': [], 'green': [], 'blue': []}
+    for i, item in enumerate(seq):
+        if isinstance(item, float):
+            r1, g1, b1 = seq[i - 1]
+            r2, g2, b2 = seq[i + 1]
+            cdict['red'].append([item, r1, r2])
+            cdict['green'].append([item, g1, g2])
+            cdict['blue'].append([item, b1, b2])
+    return mcolors.LinearSegmentedColormap('CustomMap', cdict)
+
+def showGTmap(map):
+    c = mcolors.ColorConverter().to_rgb
+    heatMap = make_colormap([c('limegreen'), 0.25, c('yellow'), 0.5, c('orange'), 0.75, c('red')])
+    fig = plt.figure()
+    f = plt.imshow(map, cmap=heatMap)
+    fig.savefig('GroundTruth.png', dpi=fig.dpi)
+
+
 def objective_function(params):
     global ZONES_TO_VISIT, MAX_UTIL
     Vi = params['Vi']
@@ -768,24 +716,6 @@ if __name__ == '__main__':
 
     params = buildParamSet(featureNum, 9)
 
-    trials = Trials()
-
-    best_param = fmin(objective_function,
-                      params,
-                      algo=tpe.suggest,
-                      max_evals=num_eval,
-                      trials=trials,
-                      rstate=np.random.RandomState(1))
-
-
-
-    for i in best_param:
-        print(i, best_param[i])
-
-
-    accuracy, numVisited = runSim(best_param)
-
-    showGTmap(GTMap)
-
+    accuracy, numVisited = runSim(params)
     print('Best Performance: ')
     print(accuracy, numVisited)

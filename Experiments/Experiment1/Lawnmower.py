@@ -16,15 +16,13 @@ import traceback
 import time
 from operator import itemgetter
 import cv2
-from matplotlib import pyplot as plt
-import matplotlib.colors as mcolors
-
 
 from hyperopt import hp, fmin, tpe, STATUS_OK, Trials
-
+import matplotlib.colors as mcolors
+from matplotlib import pyplot as plt
 
 MAX_GROUP=15
-ZONES_TO_VISIT=9
+ZONES_TO_VISIT=308
 MAX_UTIL=0
 U_GOAL = 0
 X_DIM = 6
@@ -37,7 +35,6 @@ knndataSet = []
 managementGroups = []
 mgs = []
 initialPosition=0
-GTMap = None
 
 
 dirDict = {0: [[1,3],[3,1]],
@@ -395,7 +392,7 @@ def extrapolate(GTmap, visited, imagedata):
         #print(['visited='+str(len(visible_zones)),'empty='+str(len(empty_zones)),'search='+str(len(search_zones))])
     return GTmap
 
-def checkAccBin(map, imagedata, mgs):
+def checkAcc(map, imagedata, mgs):
     global X_DIM
     right = 0
     avgex = getAverageGExMGS(mgs)
@@ -433,58 +430,7 @@ def checkAccBin(map, imagedata, mgs):
 
             #print(row, col, zone, idxr, idxc, imgIdx, gi, avgex)
             #print(group)
-            if(map[idxc][idxr] > .5 and pred > 0):
-                right += 1
-            elif(map[idxc][idxr] < .5 and pred == 0):
-                right += 1
-
-            zone += 1
-
-    #showGTmap(map)
-
-    #print('Accuracy: '+str(right/(shape[0]*shape[1])))
-    return right/(shape[0]*shape[1])
-
-
-def checkAcc(map, imagedata, mgs):
-    global X_DIM
-    right = 0
-    avgex = getAverageGExMGS(mgs)
-    shape = map.shape
-
-    for g in range(len(mgs)):
-        group = mgs[g]
-        imgs = group[2][1:-1].split(',')
-        zone = 0
-
-
-        row = int(group[1])
-        col = int(group[0])
-        groupnum = row*X_DIM+col
-        #print(row,col,groupnum)
-
-        for imgNum in range(len(imgs)):
-            imgIdx = imgs[imgNum].strip()[1:-1]
-            imageVal = getImage(imgIdx)
-            gi = getGI(imageVal)
-
-            pred = 0
-
-            if(gi>1*avgex):
-                pred = 0
-            elif(gi>0.9*avgex):
-                pred = 1
-            elif(gi>0.8*avgex):
-                pred = 2
-            else:
-                pred = 3
-
-            idxr = row*3+zone//3
-            idxc = col*3+zone%3
-
-            #print(row, col, zone, idxr, idxc, imgIdx, gi, avgex)
-            #print(group)
-            if(map[idxc][idxr] > 2.5 and pred == 3):
+            if(map[idxc][idxr] > 2.5 and pred ==3):
                 right += 1
             elif(map[idxc][idxr] > 1.5 and pred == 2):
                 right += 1
@@ -495,7 +441,8 @@ def checkAcc(map, imagedata, mgs):
 
             zone += 1
 
-    print('Accuracy: '+str(right/(shape[0]*shape[1])))
+    #print('Accuracy: '+str(right/(shape[0]*shape[1])))
+    showGTmap(map)
     return right/(shape[0]*shape[1])
 
 
@@ -516,71 +463,115 @@ def getUtil(img):
     util = float(img[12].split(',')[12].split('=')[1][:-1])
     return util
 
-def findNextImg(gm, pos, visited, imgList):
-    global dirDict
-    dirs = dirDict[pos]
+def getNeighbors(row, col):
+    global X_DIM, Y_DIM
+    neighbors = []
+    if(row-1 >= 0):
+        neighbors.append([row-1, col])
+    else:
+        neighbors.append([])
+    if(row+1 < 3*Y_DIM):
+        neighbors.append([row+1, col])
+    else:
+        neighbors.append([])
+    if(col+1 < 3*X_DIM):
+        neighbors.append([row, col+1])
+    else:
+        neighbors.append([])
+    if(col-1 >= 0):
+        neighbors.append([row, col-1])
+    else:
+        neighbors.append([])
+
+
+    return neighbors
+
+def findNextImg(gm, row, col, visited, visitedNeighbors):
+    neighbors = getNeighbors(row,col)
 
     maxdir = 0
     dirval = 0
-    for n in dirs:
-        if(gm[n[0]] > dirval and n[1] not in visited):
-            maxdir = n
-            dirval = gm[n[0]]
+    for n in range(len(neighbors)):
+        if(gm[n] > dirval and neighbors[n] not in visited and neighbors[n] != []):
+            maxdir = neighbors[n]
+            dirval = gm[n]
 
-    if(len(visited) == 9):
-        return -1
-    #if all neighbors have been visited
+    for n in range(len(neighbors)):
+        if(neighbors[n] not in visited and neighbors[n] != [] and neighbors[n] not in visitedNeighbors and neighbors[n] != maxdir):
+            visitedNeighbors.append(neighbors[n])
+
     if(dirval == 0):
-        while(True):
-            num = random.randrange(0,9)
-            if(num not in visited):
-                #print('Random')
-                return num
+        for n in visitedNeighbors:
+            if(n not in visited):
+                return n[0], n[1], visitedNeighbors
+        print('Wow, you did it!, you created an error!')
+        exit()
 
-    return maxdir[1]
+    return maxdir[0], maxdir[1], visitedNeighbors
 
-def computeSimilarity(imgList, visited, avgex):
-    predmap = {0:0, 1:0, 2:0, 3:0}
-    for i in visited:
-        img = getImage(imgList[i])
-        gi = getGI(img)
-        if(gi>avgex):
-            predmap[0] += 1
-        elif(gi>avgex*.9):
-            predmap[1] += 1
-        elif(gi>avgex*.8):
-            predmap[2] += 1
-        else:
-            predmap[3] += 1
-    simIdx = 0
-    for key in predmap:
-        if(predmap[key] > simIdx):
-            simIdx = predmap[key]
+def getImgRC(row, col, mgs, imagedata):
+    global X_DIM
+    groupnum = (row//3)*X_DIM+col//3
 
-    return simIdx
+    zonenum = (row-(row//3)*3)*3 + (col-(col//3)*3)
 
-def explore(mg, imagedata, pos, mgs):
-    global knndataSet, ZONES_TO_VISIT, MAX_UTIL
+    group = mgs[groupnum][2][1:-1].split(',')
 
-    avgex = getAverageGExMGS(mgs)
+    pic = group[zonenum].strip()
+    img = getImage(pic[1:-1])
+    return img
+
+
+def explore(mg, imagedata, pos):
+    global knndataSet, ZONES_TO_VISIT, MAX_UTIL, X_DIM, Y_DIM
 
     visited = []
+    visitedNeighbors = []
     util = 0
-    imgList = getGroup(mg)
-    simIdx = 0
-    while(len(visited) < ZONES_TO_VISIT and simIdx < MAX_UTIL): #Arbitrary condition for testing, change to hyperparam approach
-        currentIm = getImage(imgList[pos])
-        gi = getGI(currentIm)
-        util += getUtil(currentIm)
-        visited.append(pos)
+
+    row = 0
+    col = 0
+
+    x_bound = X_DIM*3
+    y_bound = Y_DIM*3
+
+    mod = 1
+
+    while(len(visited) < ZONES_TO_VISIT):
+        visited.append([row,col])
         #Returns NSEW utility gain
-        gm = findGain(currentIm, knndataSet[0])
-        pos = findNextImg(gm, pos, visited, imgList)
+        if((row < y_bound-1 and mod == 1) or (row>0 and mod == -1)):
+            row = row+mod
+        elif((row == y_bound-1 and mod == 1) or (row==0 and mod == -1)):
+            mod *= -1
+            col = col+1
+        else:
+            print('Huh?')
 
-        simIdx = computeSimilarity(imgList, visited, avgex)
-
-    #print('VISITED: '+str(len(visited)))
     return visited, pos
+
+def make_colormap(seq):
+    """Return a LinearSegmentedColormap
+    seq: a sequence of floats and RGB-tuples. The floats should be increasing
+    and in the interval (0,1).
+    """
+    seq = [(None,) * 3, 0.0] + list(seq) + [1.0, (None,) * 3]
+    cdict = {'red': [], 'green': [], 'blue': []}
+    for i, item in enumerate(seq):
+        if isinstance(item, float):
+            r1, g1, b1 = seq[i - 1]
+            r2, g2, b2 = seq[i + 1]
+            cdict['red'].append([item, r1, r2])
+            cdict['green'].append([item, g1, g2])
+            cdict['blue'].append([item, b1, b2])
+    return mcolors.LinearSegmentedColormap('CustomMap', cdict)
+
+def showGTmap(map):
+    c = mcolors.ColorConverter().to_rgb
+    heatMap = make_colormap([c('limegreen'), 0.25, c('yellow'), 0.5, c('orange'), 0.75, c('red')])
+    fig = plt.figure()
+    f = plt.imshow(map, cmap=heatMap)
+    fig.savefig('Lawnmower.png', dpi=fig.dpi)
 
 def getNextGroup(groupnum):
     global MAX_GROUP, X_DIM, Y_DIM
@@ -599,17 +590,27 @@ def getNextGroup(groupnum):
 
     return -1
 
+def convertToGroups(groupValues):
+    global X_DIM, Y_DIM
+    finalMap = []
+    for i in range(X_DIM*Y_DIM):
+        finalMap.append([i,[]])
+
+    for i in groupValues:
+        group = i[0]//3 * X_DIM + i[1]//3
+        zonenum = (i[0]-(i[0]//3)*3)*3 + (i[1]-(i[1]//3)*3)
+        finalMap[group][1].append(zonenum)
+
+    return finalMap
+
 def simulateMission(mgs, imagedata, pos):
     groupNum = 0
     visitedGroups = []
     finalMap = []
     #Explore all management zones!
-    while(len(visitedGroups) != len(mgs)):
-        groupValues, npos = explore(mgs[groupNum], imagedata, pos, mgs)
-        finalMap.append([groupNum, groupValues])
-        visitedGroups.append(groupNum)
-        #print('------------Group '+str(groupNum)+' Visited-------------')
-        groupNum = getNextGroup(groupNum)
+    groupValues, npos = explore(mgs, imagedata, pos)
+    finalMap = convertToGroups(groupValues)
+
     #print(visitedGroups)
     return finalMap
 
@@ -636,37 +637,14 @@ def buildGTMap(mgs, imagedata, visitedZones):
 
             if(gi>1*avgex):
                 GTmap[idxc][idxr] = 0
-            elif(gi>0.9*avgex):
+            elif(gi>.9*avgex):
                 GTmap[idxc][idxr] = 1
             elif(gi>0.8*avgex):
                 GTmap[idxc][idxr] = 2
             else:
                 GTmap[idxc][idxr] = 3
+
     return GTmap
-
-def make_colormap(seq):
-    """Return a LinearSegmentedColormap
-    seq: a sequence of floats and RGB-tuples. The floats should be increasing
-    and in the interval (0,1).
-    """
-    seq = [(None,) * 3, 0.0] + list(seq) + [1.0, (None,) * 3]
-    cdict = {'red': [], 'green': [], 'blue': []}
-    for i, item in enumerate(seq):
-        if isinstance(item, float):
-            r1, g1, b1 = seq[i - 1]
-            r2, g2, b2 = seq[i + 1]
-            cdict['red'].append([item, r1, r2])
-            cdict['green'].append([item, g1, g2])
-            cdict['blue'].append([item, b1, b2])
-    return mcolors.LinearSegmentedColormap('CustomMap', cdict)
-
-def showGTmap(map):
-    c = mcolors.ColorConverter().to_rgb
-    heatMap = make_colormap([c('limegreen'), 0.25, c('yellow'), 0.5, c('orange'), 0.75, c('red')])
-    fig = plt.figure()
-    f = plt.imshow(map, cmap=heatMap)
-    fig.savefig('DistanceFunc.png', dpi=fig.dpi)
-
 
 def getNumVisited(zones):
     visited = 0
@@ -674,14 +652,15 @@ def getNumVisited(zones):
         visited += len(group[1])
     return visited
 
-def runSim(params):
-    global mgs, imagedata, initialPosition, GTMap
+def runSim():
+    global mgs, imagedata, initialPosition
     visitedZones = simulateMission(mgs, imagedata, initialPosition)
     GTMap = buildGTMap(mgs, imagedata, visitedZones)
     fullMap = extrapolate(GTMap, visitedZones, imagedata)
-    acc = checkAccBin(fullMap, imagedata, mgs)
+    acc = checkAcc(fullMap, imagedata, mgs)
 
     numVisited = getNumVisited(visitedZones)
+
 
     return acc, numVisited
 
@@ -739,7 +718,7 @@ def objective_function(params):
     if(accuracy > ACCURACY_GOAL):
         loss = numVisited
     else:
-        loss = numVisited*1000
+        loss = sys.maxsize
 
     return loss
 
@@ -760,32 +739,21 @@ if __name__ == '__main__':
     initialPosition = 0
 
     #mgs = managementGroups[0:3]+ managementGroups[11:14]+ managementGroups[22:25]+ managementGroups[33:36]+ managementGroups[44:47]
-    #mgs = managementGroups[0:55:11] + managementGroups[1:56:11] + managementGroups[2:57:11]
+    #mgs = managementGroups[0:55:11] + managementGroups[1:56:11] + managementGroups[2:57:11] + managementGroups[3:58:11] + managementGroups[4:59:11] + managementGroups[5:60:11] + managementGroups[6:61:11] + managementGroups[7:62:11] + managementGroups[8:63:11] + managementGroups[9:64:11] + managementGroups[10:65:11]
     mgs = managementGroups[0:65:11] + managementGroups[1:66:11] + managementGroups[2:67:11] + managementGroups[3:68:11] + managementGroups[4:69:11] + managementGroups[5:70:11] + managementGroups[6:71:11] + managementGroups[7:72:11] + managementGroups[8:73:11] + managementGroups[9:74:11] + managementGroups[10:75:11]
 
+    thold = 0.7
 
-    featureNum = len(getFeatures(imagedata[1]))-1
+    for i in range(42,43):
+        ZONES_TO_VISIT = 10*i
 
-    params = buildParamSet(featureNum, 9)
+        accuracy,numVisited = runSim()
 
-    trials = Trials()
+        #print(numVisited, accuracy)
+        if(accuracy>thold):
+            print([thold,numVisited,accuracy])
+            thold+=.05
 
-    best_param = fmin(objective_function,
-                      params,
-                      algo=tpe.suggest,
-                      max_evals=num_eval,
-                      trials=trials,
-                      rstate=np.random.RandomState(1))
-
-
-
-    for i in best_param:
-        print(i, best_param[i])
-
-
-    accuracy, numVisited = runSim(best_param)
-
-    showGTmap(GTMap)
 
     print('Best Performance: ')
     print(accuracy, numVisited)

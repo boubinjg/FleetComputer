@@ -16,12 +16,14 @@ import traceback
 import time
 from operator import itemgetter
 import cv2
+from matplotlib import pyplot as plt
+import matplotlib.colors as mcolors
 
 from hyperopt import hp, fmin, tpe, STATUS_OK, Trials
 
 
 MAX_GROUP=15
-ZONES_TO_VISIT=350
+ZONES_TO_VISIT=308
 MAX_UTIL=0
 U_GOAL = 0
 X_DIM = 6
@@ -391,6 +393,81 @@ def extrapolate(GTmap, visited, imagedata):
         #print(['visited='+str(len(visible_zones)),'empty='+str(len(empty_zones)),'search='+str(len(search_zones))])
     return GTmap
 
+def make_colormap(seq):
+    """Return a LinearSegmentedColormap
+    seq: a sequence of floats and RGB-tuples. The floats should be increasing
+    and in the interval (0,1).
+    """
+    seq = [(None,) * 3, 0.0] + list(seq) + [1.0, (None,) * 3]
+    cdict = {'red': [], 'green': [], 'blue': []}
+    for i, item in enumerate(seq):
+        if isinstance(item, float):
+            r1, g1, b1 = seq[i - 1]
+            r2, g2, b2 = seq[i + 1]
+            cdict['red'].append([item, r1, r2])
+            cdict['green'].append([item, g1, g2])
+            cdict['blue'].append([item, b1, b2])
+    return mcolors.LinearSegmentedColormap('CustomMap', cdict)
+
+def showGTmap(map):
+    c = mcolors.ColorConverter().to_rgb
+    heatMap = make_colormap([c('limegreen'), 0.25, c('yellow'), 0.5, c('orange'), 0.75, c('red')])
+    fig = plt.figure()
+    plt.imshow(map, cmap=heatMap)
+    fig.savefig('oldMethod.png', dpi=fig.dpi)
+
+def checkAccBin(map, imagedata, mgs):
+    global X_DIM
+    right = 0
+    avgex = getAverageGExMGS(mgs)
+    shape = map.shape
+
+    for g in range(len(mgs)):
+        group = mgs[g]
+        imgs = group[2][1:-1].split(',')
+        zone = 0
+
+
+        row = int(group[1])
+        col = int(group[0])
+        groupnum = row*X_DIM+col
+        #print(row,col,groupnum)
+
+        for imgNum in range(len(imgs)):
+            imgIdx = imgs[imgNum].strip()[1:-1]
+            imageVal = getImage(imgIdx)
+            gi = getGI(imageVal)
+
+            pred = 0
+
+            if(gi>1*avgex):
+                pred = 0
+            elif(gi>.9*avgex):
+                pred = 1
+            elif(gi>.8*avgex):
+                pred = 2
+            else:
+                pred = 3
+
+            idxr = row*3+zone//3
+            idxc = col*3+zone%3
+
+            #print(row, col, zone, idxr, idxc, imgIdx, gi, avgex)
+            #print(group)
+            if(map[idxc][idxr] > .5 and pred > 0):
+                right += 1
+            elif(map[idxc][idxr] < .5 and pred == 0):
+                right += 1
+
+            zone += 1
+
+    showGTmap(map)
+
+    #print('Accuracy: '+str(right/(shape[0]*shape[1])))
+    return right/(shape[0]*shape[1])
+
+
+
 def checkAcc(map, imagedata, mgs):
     global X_DIM
     right = 0
@@ -440,7 +517,9 @@ def checkAcc(map, imagedata, mgs):
 
             zone += 1
 
-    print('Accuracy: '+str(right/(shape[0]*shape[1])))
+    showGTmap(map)
+
+    #print('Accuracy: '+str(right/(shape[0]*shape[1])))
     return right/(shape[0]*shape[1])
 
 
@@ -481,6 +560,7 @@ def getNeighbors(row, col):
     else:
         neighbors.append([])
 
+
     return neighbors
 
 def findNextImg(gm, row, col, visited, visitedNeighbors):
@@ -513,6 +593,7 @@ def getImgRC(row, col, mgs, imagedata):
     zonenum = (row-(row//3)*3)*3 + (col-(col//3)*3)
 
     group = mgs[groupnum][2][1:-1].split(',')
+
     pic = group[zonenum].strip()
     img = getImage(pic[1:-1])
     return img
@@ -525,8 +606,8 @@ def explore(mg, imagedata, pos):
     visitedNeighbors = []
     util = 0
 
-    row = 0
-    col = 0
+    row = 25
+    col = 10
 
     while(len(visited) < ZONES_TO_VISIT):
         currentIm = getImgRC(row, col, mgs, imagedata)
@@ -536,7 +617,8 @@ def explore(mg, imagedata, pos):
         #Returns NSEW utility gain
         gm = findGain(currentIm, knndataSet[0])
         row,col,visitedNeighbors = findNextImg(gm, row, col, visited, visitedNeighbors)
-        print(len(visited))
+        #print(row,col)
+        #print(len(visited))
     #print('VISITED: '+str(len(visited)))
 
     return visited, pos
@@ -625,7 +707,7 @@ def runSim():
     visitedZones = simulateMission(mgs, imagedata, initialPosition)
     GTMap = buildGTMap(mgs, imagedata, visitedZones)
     fullMap = extrapolate(GTMap, visitedZones, imagedata)
-    acc = checkAcc(fullMap, imagedata, mgs)
+    acc = checkAccBin(fullMap, imagedata, mgs)
 
     numVisited = getNumVisited(visitedZones)
 
@@ -708,6 +790,18 @@ if __name__ == '__main__':
     #mgs = managementGroups[0:3]+ managementGroups[11:14]+ managementGroups[22:25]+ managementGroups[33:36]+ managementGroups[44:47]
     #mgs = managementGroups[0:55:11] + managementGroups[1:56:11] + managementGroups[2:57:11] + managementGroups[3:58:11] + managementGroups[4:59:11] + managementGroups[5:60:11] + managementGroups[6:61:11] + managementGroups[7:62:11] + managementGroups[8:63:11] + managementGroups[9:64:11] + managementGroups[10:65:11]
     mgs = managementGroups[0:65:11] + managementGroups[1:66:11] + managementGroups[2:67:11] + managementGroups[3:68:11] + managementGroups[4:69:11] + managementGroups[5:70:11] + managementGroups[6:71:11] + managementGroups[7:72:11] + managementGroups[8:73:11] + managementGroups[9:74:11] + managementGroups[10:75:11]
+
+    thold = 0.7
+
+    for i in range(10,59):
+        ZONES_TO_VISIT = 10*i
+        accuracy,numVisited = runSim()
+
+        #print(numVisited, accuracy)
+        if(accuracy>thold):
+            print([thold,numVisited,accuracy])
+            thold+=.05
+
 
     accuracy, numVisited = runSim()
 
